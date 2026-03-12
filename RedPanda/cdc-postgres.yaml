@@ -1,0 +1,23 @@
+input:
+  generate:
+    interval: "10s" # Il va lire la table toutes les 10 secondes
+    mapping: root = {} # Déclenche l'action
+
+pipeline:
+  processors:
+    - sql_select:
+        driver: "postgres"
+        dsn: "postgres://redpanda_user:roro@192.168.1.177:5432/SportDataSolution"
+        table: "pratique_sport"
+        columns: ["*"]
+    - unarchive:
+        format: json_array # Le SQL renvoie un tableau, ceci le découpe en messages individuels
+    - mapping: |
+        root = this
+        root.metadata.source = "postgresql-polling"
+        root.metadata.ts = now()
+
+output:
+  kafka:
+    addresses: [ "127.0.0.1:9092" ]
+    topic: "db-updates"
