@@ -73,12 +73,6 @@ def format_slack_message(data: dict) -> str:
     #     "Tennis":    "🎾",
     # }.get(data.get("type_pratique_sportive", ""), "🏅")
 
-    if est_supprime:
-        return (
-            f"*Séance supprimée*\n"
-            f"• Événement : `#{data.get('id_evenement_sportif')}`\n"
-            f"• Employé   : `{data.get('employe_id')}`"
-        )
 
     return (
         ""
