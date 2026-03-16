@@ -63,4 +63,4 @@ def StravaLikeDataGen(dataset_employes, nombre_activites):
     
     pass
 
-StravaLikeDataGen(data_employes, 1500)
+StravaLikeDataGen(data_employes, 150)
