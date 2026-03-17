@@ -5,7 +5,8 @@ import boto3
 from dotenv import load_dotenv
 
 from pyspark.sql import SparkSession, functions as F
-from pyspark.sql.functions import col, count, lit, coalesce
+from pyspark.sql.functions import col, count, lit, coalesce, row_number, desc
+from pyspark.sql.window import Window
 from pyspark.sql.types import (
     StructType, StructField,
     StringType, IntegerType, BooleanType, TimestampType, DecimalType,
@@ -132,11 +133,17 @@ def write_silver_parquet(df_employee_data) -> None:
     df_employee_data : DataFrame
         Données employés enrichies (adresse, distance, cohérence) issues du batch courant.
     """
-    # Recomptage total depuis toute la source Bronze (idempotent)
+    # Recomptage total depuis toute la source Bronze (idempotent + gestion des suppressions CDC)
+    # Pour chaque id_evenement_sportif, on garde uniquement le dernier événement (par kafka_ts).
+    # Si le dernier événement est is_deleted=True (suppression CDC), l'activité est exclue du compte.
+    _window = Window.partitionBy("id_evenement_sportif").orderBy(desc("kafka_ts"))
     df_sport_count_total = (
         spark.read
         .schema(parquet_schema)
         .parquet(PARQUET_SOURCE_PATH)
+        .withColumn("_rn", row_number().over(_window))
+        .filter(col("_rn") == 1)
+        .drop("_rn")
         .filter(col("is_deleted") == False)
         .groupBy("employe_id")
         .agg(count("employe_id").alias("pratique_sportive_annuelle"))
