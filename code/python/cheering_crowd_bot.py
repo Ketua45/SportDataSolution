@@ -13,7 +13,7 @@ load_dotenv()
 
 
 # --- Configuration ---
-REDPANDA_BROKER   = "127.0.0.1:9092"
+REDPANDA_BROKER   = os.getenv("REDPANDA_BROKER", "127.0.0.1:9092")
 TOPIC             = "cdc.public.pratique_sport"
 GROUP_ID          = "slack-notifier"
 SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL")

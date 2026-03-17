@@ -1,0 +1,51 @@
+services:
+
+  # ── 1. Cheering Bot Slack ────────────────────────────────────────────────
+  # Consomme le topic Redpanda et envoie une notification Slack pour chaque
+  # nouvelle activité sportive enregistrée.
+  cheering-bot:
+    build:
+      context: ..                          # racine du projet
+      dockerfile: docker/cheering-bot/Dockerfile
+    env_file: ../.env
+    # network_mode host : accède à Redpanda (127.0.0.1:9092) et PostgreSQL
+    # (192.168.1.177) comme s'il tournait directement sur la machine hôte.
+    # Sur Linux uniquement — remplacer par un bridge + extra_hosts sur macOS/Windows.
+    network_mode: host
+    restart: unless-stopped
+
+  # ── 2. Redpanda → S3 Parquet ─────────────────────────────────────────────
+  # Lit en streaming le topic CDC Redpanda et écrit les événements sportifs
+  # en Parquet sur S3 (Bronze layer).
+  redpanda-to-s3:
+    build:
+      context: ..
+      dockerfile: docker/spark/Dockerfile
+    env_file: ../.env
+    network_mode: host
+    restart: unless-stopped
+    command: >
+      spark-submit
+      --master local[2]
+      --packages org.apache.hadoop:hadoop-aws:3.4.2,org.apache.spark:spark-sql-kafka-0-10_2.13:4.1.1
+      /app/redpanda_to_s3_parquet.py
+
+  # ── 3. Streaming Silver — Mobilité & Sport ───────────────────────────────
+  # Surveille le répertoire Parquet S3, enrichit chaque micro-batch avec les
+  # données employés / mobilité PostgreSQL et écrit en Parquet Silver sur S3.
+  streaming-silver:
+    build:
+      context: ..
+      dockerfile: docker/spark/Dockerfile
+    env_file: ../.env
+    network_mode: host
+    restart: unless-stopped
+    # Démarre après redpanda-to-s3 pour s'assurer que des fichiers Parquet
+    # existent déjà dans le répertoire source avant la première surveillance.
+    depends_on:
+      - redpanda-to-s3
+    command: >
+      spark-submit
+      --master local[2]
+      --packages org.apache.hadoop:hadoop-aws:3.4.2,org.postgresql:postgresql:42.7.3
+      /app/streaming_silver_mobilite_sport.py

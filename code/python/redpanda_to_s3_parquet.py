@@ -15,36 +15,28 @@ from pyspark.sql.types import (
 )
 from pyspark.sql.functions import udf
 from decimal import Decimal
-from delta import configure_spark_with_delta_pip
 
-# ---------------------------------------------------------------------------
+
 # Session Spark
-# ---------------------------------------------------------------------------
-builder = (
+
+spark = (
     SparkSession.builder
     .appName("RedPanda_to_S3_Parquet")
     .config("spark.hadoop.fs.s3a.access.key", os.getenv("AWS_ACCESS_KEY"))
     .config("spark.hadoop.fs.s3a.secret.key", os.getenv("AWS_SECRET_KEY"))
     .config("spark.hadoop.fs.s3a.endpoint", "s3.amazonaws.com")
-    .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
-    .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+    .config(
+        "spark.sql.streaming.checkpointFileManagerClass",
+        "org.apache.spark.sql.execution.streaming.checkpointing.FileSystemBasedCheckpointFileManager",
+    )
+    .getOrCreate()
 )
 
-spark = configure_spark_with_delta_pip(
-    builder,
-    extra_packages=[
-        "org.apache.hadoop:hadoop-aws:3.4.2",
-        "org.postgresql:postgresql:42.7.3",
-        "org.apache.spark:spark-sql-kafka-0-10_2.13:4.1.1",
-    ]
-).getOrCreate()
-
 print("Version de Spark  :", spark.version)
-print("Version de Hadoop :", spark.sparkContext._jvm.org.apache.hadoop.util.VersionInfo.getVersion())
 
-# ---------------------------------------------------------------------------
+
 # Schéma CDC Debezium
-# ---------------------------------------------------------------------------
+
 schema = StructType([
     StructField("id_evenement_sportif", IntegerType()),
     StructField("employe_id", IntegerType()),
@@ -59,9 +51,9 @@ schema = StructType([
     StructField("__deleted", StringType()),
 ])
 
-# ---------------------------------------------------------------------------
+
 # UDF : décodage du décimal Debezium (base64 big-endian)
-# ---------------------------------------------------------------------------
+
 @udf(returnType=DecimalType(10, 0))
 def decode_debezium_decimal(b64_value, scale):
     if b64_value is None:
@@ -70,21 +62,23 @@ def decode_debezium_decimal(b64_value, scale):
     val = int.from_bytes(raw, byteorder="big", signed=True)
     return Decimal(val) / (Decimal(10) ** scale)
 
-# ---------------------------------------------------------------------------
+
 # Lecture streaming depuis Redpanda
-# ---------------------------------------------------------------------------
+
+REDPANDA_BROKER = os.getenv("REDPANDA_BROKER", "127.0.0.1:9092")
+
 df_stream_raw = (
     spark.readStream
     .format("kafka")
-    .option("kafka.bootstrap.servers", "127.0.0.1:9092")
+    .option("kafka.bootstrap.servers", REDPANDA_BROKER)
     .option("subscribe", "cdc.public.pratique_sport")
     .option("startingOffsets", "earliest")
     .load()
 )
 
-# ---------------------------------------------------------------------------
+
 # Parsing JSON + transformations
-# ---------------------------------------------------------------------------
+
 df_stream_final = (
     df_stream_raw
     .selectExpr("CAST(value AS STRING) as json_str", "timestamp as kafka_ts")
@@ -99,9 +93,9 @@ df_stream_final = (
     .drop("distance_base64", "distance_scale")
 )
 
-# ---------------------------------------------------------------------------
+
 # Ecriture en streaming vers S3 au format Parquet
-# ---------------------------------------------------------------------------
+
 PARQUET_PATH    = "s3a://sportdatasolution-469345420249-eu-west-3-an/pratique_sportives/parquet/"
 CHECKPOINT_PATH = "s3a://sportdatasolution-469345420249-eu-west-3-an/pratique_sportives/checkpoint/"
 
