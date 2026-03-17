@@ -38,6 +38,19 @@ Redpanda (CDC PostgreSQL)
 | `cheering-bot` | `python:3.11-slim` | `cheering_crowd_bot.py` | Kafka consumer → notification Slack |
 | `redpanda-to-s3` | `python:3.11-slim` + Java 17 | `redpanda_to_s3_parquet.py` | CDC Redpanda → S3 Parquet (Bronze) |
 | `streaming-silver` | `python:3.11-slim` + Java 17 | `streaming_silver_mobilite_sport.py` | S3 Parquet + PostgreSQL → S3 Parquet (Silver) |
+| `pipeline-exporter` | `python:3.11-slim` | `pipeline_exporter.py` | Lit Silver S3 → métriques Prometheus (:9101) |
+| `prometheus` | `prom/prometheus` | — | Collecte métriques → stockage TSDB (:9090) |
+| `grafana` | `grafana/grafana` | — | Dashboard visualisation (:3000) |
+| `node-exporter` | `prom/node-exporter` | — | Métriques système hôte (:9100) |
+| `cadvisor` | `gcr.io/cadvisor/cadvisor` | — | Métriques containers Docker (:8080) |
+
+### Accès monitoring
+
+| Interface | URL |
+|-----------|-----|
+| Grafana | http://localhost:3000 (admin / admin) |
+| Prometheus | http://localhost:9091 |
+| cAdvisor | http://localhost:8080 |
 
 ---
 

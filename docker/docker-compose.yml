@@ -49,3 +49,86 @@ services:
       --master local[2]
       --packages org.apache.hadoop:hadoop-aws:3.4.2,org.postgresql:postgresql:42.7.3
       /app/streaming_silver_mobilite_sport.py
+
+  # ── 4. Pipeline Exporter ──────────────────────────────────────────────────
+  # Lit silver_latest.parquet sur S3 toutes les 60 s et expose les métriques
+  # métier (activités, employés) sur :9101 pour Prometheus.
+  pipeline-exporter:
+    build:
+      context: ..
+      dockerfile: docker/monitoring/Dockerfile
+    env_file: ../.env
+    network_mode: host
+    restart: unless-stopped
+    depends_on:
+      - streaming-silver
+
+  # ── 5. Prometheus ─────────────────────────────────────────────────────────
+  # Collecte les métriques système (node_exporter), containers (cadvisor)
+  # et pipeline (pipeline-exporter). Interface : http://localhost:9090
+  prometheus:
+    image: prom/prometheus:latest
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.listen-address=:9091'
+
+  # ── 6. Grafana ────────────────────────────────────────────────────────────
+  # Dashboard de visualisation. Interface : http://localhost:3000
+  # Login par défaut : admin / admin
+  grafana:
+    image: grafana/grafana:latest
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SERVER_HTTP_PORT=3000
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/etc/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+
+  # ── 7. Node Exporter ─────────────────────────────────────────────────────
+  # Métriques système de la machine hôte (CPU, RAM, disque). Port : 9100
+  node-exporter:
+    image: prom/node-exporter:latest
+    network_mode: host
+    restart: unless-stopped
+    pid: host
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+      - '--path.rootfs=/rootfs'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+
+  # ── 8. cAdvisor ──────────────────────────────────────────────────────────
+  # Métriques des containers Docker (CPU, mémoire par container). Port : 8080
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:latest
+    network_mode: host
+    restart: unless-stopped
+    privileged: true
+    devices:
+      - /dev/kmsg
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+      - /dev/disk:/dev/disk:ro
+
+volumes:
+  prometheus_data:
+  grafana_data:
