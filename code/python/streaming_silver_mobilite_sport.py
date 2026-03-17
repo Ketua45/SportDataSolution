@@ -4,6 +4,8 @@ import threading
 import boto3
 from dotenv import load_dotenv
 
+from data_quality import validate_silver
+
 from pyspark.sql import SparkSession, functions as F
 from pyspark.sql.functions import col, count, lit, coalesce, row_number, desc
 from pyspark.sql.window import Window
@@ -184,7 +186,11 @@ def write_silver_parquet(df_employee_data) -> None:
         .mode("overwrite")
         .save(SILVER_PARQUET_PATH))
 
-    print(f"Silver mis à jour — {df_final.count()} employés, {new_total} activités totales")
+    n_employes = df_final.count()
+    print(f"Silver mis à jour — {n_employes} employés, {new_total} activités totales")
+
+    # Validation qualité de la couche Silver
+    validate_silver(df_final)
 
     # ── Copie vers un chemin stable pour PowerBI ──────────────────────────────
     _publish_stable_parquet()

@@ -1,82 +1,75 @@
+"""
+Contrôle qualité ad-hoc — SportDataSolution
+=============================================
+Script à lancer manuellement pour valider les données Bronze et Silver
+déjà présentes sur S3, indépendamment du streaming en cours.
+
+Utilise le module data_quality.py (mêmes règles que dans le pipeline).
+
+Usage :
+  conda run -n SportDataSolution spark-submit \
+    --master local[*] \
+    --packages org.apache.hadoop:hadoop-aws:3.4.2,org.postgresql:postgresql:42.7.3 \
+    code/python/data_integrity_checks.py
+"""
+
+import os
 import warnings
 warnings.filterwarnings("ignore")
 
-import great_expectations as gx
 from dotenv import load_dotenv
-import os
+load_dotenv(dotenv_path="/home/romain/formation_data_engineer/Projet_12_SportDataSolution/.env")
 
-load_dotenv()
-print("Great Expectations version :", gx.__version__, "\n\n")
-print("Début des contrôles de cohérence sur la table pratique_sport :\n")
-print("-------------------------------------------------------------\n")
-context = gx.get_context()
-
-connection_string = os.getenv("DATABASE_URL")
-
-datasource = context.data_sources.add_sql(
-    name="SportDataSolution",
-    connection_string=connection_string,
+from pyspark.sql import SparkSession
+from pyspark.sql.types import (
+    StructType, StructField,
+    StringType, IntegerType, BooleanType, TimestampType, DecimalType,
 )
 
-data_asset = datasource.add_table_asset(
-    name="pratique_sport",
-    table_name="pratique_sport",
-    schema_name="public",
+from data_quality import validate_bronze_batch, validate_silver
+
+# ---------------------------------------------------------------------------
+# SparkSession
+# ---------------------------------------------------------------------------
+
+spark = (
+    SparkSession.builder
+    .appName("DataQuality_AdHoc")
+    .config("spark.hadoop.fs.s3a.access.key", os.getenv("AWS_ACCESS_KEY"))
+    .config("spark.hadoop.fs.s3a.secret.key", os.getenv("AWS_SECRET_KEY"))
+    .config("spark.hadoop.fs.s3a.endpoint", "s3.amazonaws.com")
+    .getOrCreate()
 )
+spark.sparkContext.setLogLevel("WARN")
 
-batch_definition = data_asset.add_batch_definition_whole_table(
-    name="batch_complet"
-)
+S3_BUCKET          = os.getenv("AWS_S3_BUCKET", "sportdatasolution-469345420249-eu-west-3-an")
+BRONZE_PATH        = f"s3a://{S3_BUCKET}/pratique_sportives/parquet/"
+SILVER_PATH        = f"s3a://{S3_BUCKET}/silver/mobilite_douces_employe_sport/parquet/"
 
-suite = context.suites.add(
-    gx.ExpectationSuite(name="controles_coherence")
-)
+bronze_schema = StructType([
+    StructField("id_evenement_sportif",   IntegerType()),
+    StructField("employe_id",             IntegerType()),
+    StructField("type_pratique_sportive", StringType()),
+    StructField("date",                   TimestampType()),
+    StructField("temps_ecoule",           IntegerType()),
+    StructField("commentaire",            StringType()),
+    StructField("is_deleted",             BooleanType()),
+    StructField("kafka_ts",               TimestampType()),
+    StructField("distance_km",            DecimalType(10, 0)),
+])
 
-suite.add_expectation(
-    gx.expectations.ExpectColumnValuesToBeBetween(
-        column="distance",
-        min_value=0.01,
-        max_value=None,
-    )
-)
+print("=" * 60)
+print("Contrôle qualité — couche Bronze")
+print("=" * 60)
+df_bronze = spark.read.schema(bronze_schema).parquet(BRONZE_PATH)
+print(f"  {df_bronze.count()} enregistrements lus depuis {BRONZE_PATH}")
+validate_bronze_batch(df_bronze)
 
-suite.add_expectation(
-    gx.expectations.ExpectColumnValuesToBeInSet(
-        column="type_pratique_sportive",
-        value_set=["Course à pied", "Vélo", "Natation", "Marche", "Trotinette", "Voile"],
-    )
-)
+print("=" * 60)
+print("Contrôle qualité — couche Silver")
+print("=" * 60)
+df_silver = spark.read.parquet(SILVER_PATH)
+print(f"  {df_silver.count()} enregistrements lus depuis {SILVER_PATH}")
+validate_silver(df_silver)
 
-vd = context.validation_definitions.add(
-    gx.ValidationDefinition(
-        name="validation_sport",
-        data=batch_definition,
-        suite=suite,
-    )
-)
-
-checkpoint = context.checkpoints.add(
-    gx.Checkpoint(
-        name="checkpoint_sport",
-        validation_definitions=[vd],
-    )
-)
-
-results = checkpoint.run()
-print("Succès :", results.success)
-print()
-
-for vr in results.run_results.values():
-    for res in vr.results:
-        status = "-- OK --" if res.success else "-- KO --"
-        exp_type = res.expectation_config.type
-        col = res.expectation_config.kwargs.get("column", "N/A")
-        details = {k: v for k, v in res.expectation_config.kwargs.items() if k != "column"}
-        print(f"{status} [{col}] {exp_type}")
-        print(f"   Paramètres : {details}")
-        if not res.success and res.result:
-            unexpected = res.result.get("unexpected_count", "?")
-            total = res.result.get("element_count", "?")
-            pct = res.result.get("unexpected_percent", "?")
-            print(f"   Valeurs non conformes : {unexpected}/{total} ({pct:.1f}%)")
-        print()
+spark.stop()

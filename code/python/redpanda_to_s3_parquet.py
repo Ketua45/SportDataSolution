@@ -6,6 +6,8 @@ warnings.filterwarnings("ignore")
 from dotenv import load_dotenv
 load_dotenv()
 
+from data_quality import validate_bronze_batch
+
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql.functions import col, from_json
@@ -99,13 +101,31 @@ df_stream_final = (
 PARQUET_PATH    = "s3a://sportdatasolution-469345420249-eu-west-3-an/pratique_sportives/parquet/"
 CHECKPOINT_PATH = "s3a://sportdatasolution-469345420249-eu-west-3-an/pratique_sportives/checkpoint/"
 
+def process_bronze_batch(batch_df, batch_id: int) -> None:
+    """Valide et écrit un micro-batch Bronze sur S3."""
+    if batch_df.isEmpty():
+        print(f"[Bronze] Batch {batch_id} vide — rien à traiter.")
+        return
+
+    # Validation qualité avant écriture
+    validate_bronze_batch(batch_df)
+
+    # Écriture Parquet en mode append
+    (batch_df
+        .write
+        .mode("append")
+        .format("parquet")
+        .save(PARQUET_PATH))
+
+    print(f"[Bronze] Batch {batch_id} — {batch_df.count()} événements écrits sur S3.")
+
+
 query_parquet = (
     df_stream_final.writeStream
-    .outputMode("append")
-    .format("parquet")
+    .foreachBatch(process_bronze_batch)
     .option("checkpointLocation", CHECKPOINT_PATH)
     .trigger(processingTime="30 seconds")
-    .start(PARQUET_PATH)
+    .start()
 )
 
 print("Streaming vers S3 (Parquet) démarré.")

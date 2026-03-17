@@ -12,12 +12,28 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Dépendances Python
+# GX 1.3.10 déclare pandas<2.2 mais est compatible en runtime avec pandas 2.2.x.
+# On installe GX sans ses dépendances (--no-deps) pour contourner la contrainte,
+# et on installe pandas>=2.2 séparément (requis par PySpark 4.x).
 RUN pip install --no-cache-dir \
     pyspark==4.1.1 \
     python-dotenv==1.1.0 \
     googlemaps==4.10.0 \
     psycopg2-binary==2.9.10 \
-    boto3==1.37.24
+    boto3==1.37.24 \
+    "pandas>=2.2.0,<3.0" \
+    scipy \
+    numpy \
+    "altair<5.0.0" \
+    tqdm \
+    marshmallow \
+    jinja2 \
+    "ruamel.yaml>=0.16" \
+    tzlocal \
+    packaging \
+    python-dateutil \
+    typing-extensions && \
+    pip install --no-cache-dir --no-deps great-expectations==1.3.10
 
 # ── Pré-téléchargement des JARs Maven ────────────────────────────────────────
 # Les JARs sont téléchargés pendant le build et mis en cache dans ~/.ivy2.5.2
@@ -43,5 +59,6 @@ RUN spark-submit \
 WORKDIR /app
 
 # Copie des scripts Python du pipeline
+COPY code/python/data_quality.py .
 COPY code/python/redpanda_to_s3_parquet.py .
 COPY code/python/streaming_silver_mobilite_sport.py .
